@@ -1,4 +1,4 @@
 pandas
 python-dotenv
 groq
-rich
+streamlit
