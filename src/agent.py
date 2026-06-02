@@ -1,20 +1,20 @@
 import os
 import pandas as pd
-import google.generativeai as genai
+from groq import Groq
 from dotenv import load_dotenv
 
 # Load API key from .env file
 load_dotenv()
 
-# Configure the Gemini client with your API key
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Create the Groq client
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # The AI's personality and instructions
-SYSTEM_PROMPT = """You are an intelligent customer care assistant for 
+SYSTEM_PROMPT = """You are an intelligent customer care assistant for
 Atlas Copco Vacuum Technique Australia.
 
-You help the customer care team manage open sales and service orders. 
-You have access to today's live order data including order status, 
+You help the customer care team manage open sales and service orders.
+You have access to today's live order data including order status,
 due dates, assigned team members, delay reasons, and order values.
 
 Your job is to:
@@ -78,7 +78,7 @@ def ask_agent(
     history: list,
 ) -> tuple[str, list]:
     """
-    Send a question to the Gemini AI agent with full order context.
+    Send a question to the Groq AI agent with full order context.
 
     Args:
         question : The user's natural language question
@@ -92,14 +92,14 @@ def ask_agent(
     """
 
     # Check the API key exists
-    if not os.getenv("GEMINI_API_KEY"):
+    if not os.getenv("GROQ_API_KEY"):
         return (
-            "Error: GEMINI_API_KEY not found. "
+            "Error: GROQ_API_KEY not found. "
             "Please add it to your .env file.",
             history,
         )
 
-    # Format order data into text context
+    # Format order data into readable text context
     order_context = format_orders_for_context(df, summary)
 
     # Build the full message — question + data context
@@ -109,29 +109,26 @@ def ask_agent(
 
 Question: {question}"""
 
-    # Add to history
-    history.append({"role": "user", "parts": [full_message]})
+    # Add user message to history
+    history.append({"role": "user", "content": full_message})
 
     # Keep last 6 messages to manage context size
     recent_history = history[-6:]
 
-    # Create the Gemini model with system instructions
-    model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
-        system_instruction=SYSTEM_PROMPT,
+    # Always include system message at the front
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + recent_history
+
+    # Call the Groq API
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=messages,
+        max_tokens=1000,
     )
 
-    # Start a chat session with the recent history
-    # (exclude the last message — we send that separately)
-    chat = model.start_chat(history=recent_history[:-1])
-
-    # Send the latest question
-    response = chat.send_message(full_message)
-
     # Extract the answer
-    answer = response.text
+    answer = response.choices[0].message.content
 
-    # Add answer to history
-    history.append({"role": "model", "parts": [answer]})
+    # Add answer to history for follow-up questions
+    history.append({"role": "assistant", "content": answer})
 
     return answer, history
