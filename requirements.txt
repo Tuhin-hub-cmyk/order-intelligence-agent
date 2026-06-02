@@ -1,4 +1,4 @@
 pandas
 python-dotenv
-anthropic
+google-generativeai
 rich
