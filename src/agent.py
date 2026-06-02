@@ -3,10 +3,10 @@ import pandas as pd
 from groq import Groq
 from dotenv import load_dotenv
 
+# Load API key from .env file (for local development)
 load_dotenv()
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
+# The AI's personality and instructions
 SYSTEM_PROMPT = """You are an intelligent order management assistant
 for an industrial company. You help the operations team manage open
 sales and service orders.
@@ -35,6 +35,11 @@ Important rules:
 
 
 def format_orders_for_context(df: pd.DataFrame, summary: dict) -> str:
+    """
+    Convert the DataFrame and summary into readable text
+    that the AI can use as context for answering questions.
+    """
+
     context = f"""
 TODAY'S ORDER SUMMARY:
 - Total Orders    : {summary['total_orders']}
@@ -48,6 +53,7 @@ TODAY'S ORDER SUMMARY:
 
 FULL ORDER LIST:
 """
+
     for _, row in df.iterrows():
         context += f"""
 Order     : {row['order_id']}
@@ -64,6 +70,7 @@ Updated   : {row['days_since_update']} days ago
 Delay     : {row['delay_reason'] if row['delay_reason'] else 'None'}
 Notes     : {row['notes'] if row['notes'] else 'None'}
 ---"""
+
     return context
 
 
@@ -73,8 +80,25 @@ def ask_agent(
     summary: dict,
     history: list,
 ) -> tuple[str, list]:
+    """
+    Send a question to the Groq AI agent with full order context.
 
-    if not os.getenv("GROQ_API_KEY"):
+    Args:
+        question : The user's natural language question
+        df       : Orders DataFrame with flags applied
+        summary  : Summary statistics dictionary
+        history  : Conversation history (list of message dicts)
+
+    Returns:
+        answer   : The AI's response as a string
+        history  : Updated conversation history
+    """
+
+    # Get the API key from environment
+    api_key = os.getenv("GROQ_API_KEY")
+
+    # Check the API key exists before doing anything
+    if not api_key:
         return (
             "Configuration error: API key not found. "
             "Please contact the system administrator.",
@@ -82,31 +106,48 @@ def ask_agent(
         )
 
     try:
+        # Create client here so it always has the key available
+        # This works both locally (.env) and on Streamlit Cloud (secrets)
+        client = Groq(api_key=api_key)
+
+        # Format order data into readable text context
         order_context = format_orders_for_context(df, summary)
 
+        # Build the full message — question + data context
         full_message = f"""Here is today's current order data:
 
 {order_context}
 
 Question: {question}"""
 
+        # Add user message to history
         history.append({"role": "user", "content": full_message})
+
+        # Keep only last 2 messages to stay within token limits
         recent_history = history[-2:]
+
+        # Always include system message at the front
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT}
         ] + recent_history
 
+        # Call the Groq API
         response = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=messages,
             max_tokens=1000,
         )
 
+        # Extract the answer
         answer = response.choices[0].message.content
+
+        # Add answer to history for follow-up questions
         history.append({"role": "assistant", "content": answer})
+
         return answer, history
 
     except Exception as e:
+        # Return a friendly error message instead of crashing
         error_answer = (
             "I encountered a temporary issue processing your request. "
             "Please try again in a moment. If the problem persists, "
