@@ -112,15 +112,15 @@ Question: {question}"""
     # Add user message to history
     history.append({"role": "user", "content": full_message})
 
-    # Keep last 6 messages to manage context size
-    recent_history = history[-6:]
+    # Keep only last 2 messages to stay within token limits
+    recent_history = history[-2:]
 
     # Always include system message at the front
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + recent_history
 
     # Call the Groq API
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.1-8b-instant",
         messages=messages,
         max_tokens=1000,
     )
