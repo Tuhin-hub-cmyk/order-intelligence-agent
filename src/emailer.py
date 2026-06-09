@@ -1,11 +1,12 @@
 import os
+from typing import Optional
 import resend
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
-def _get_secret(key: str) -> str | None:
+def _get_secret(key: str) -> Optional[str]:
     """Return secret from Streamlit Cloud secrets, falling back to os.environ."""
     try:
         import streamlit as st
