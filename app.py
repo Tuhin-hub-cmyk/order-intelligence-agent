@@ -1,3 +1,4 @@
+import io
 import streamlit as st
 import pandas as pd
 from src.data_loader import load_orders
@@ -97,8 +98,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Session state defaults ────────────────────────────────────────────────────
-if "uploaded_file" not in st.session_state:
-    st.session_state.uploaded_file = None
+if "uploaded_bytes" not in st.session_state:
+    st.session_state.uploaded_bytes = None
+if "uploaded_filename" not in st.session_state:
+    st.session_state.uploaded_filename = None
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "agent_history" not in st.session_state:
@@ -114,13 +117,14 @@ def load_and_analyse(uploaded_file=None):
 
 # Safe load with friendly error handling
 try:
-    df, summary, priorities = load_and_analyse(
-        st.session_state.uploaded_file
-    )
+    if st.session_state.uploaded_bytes is not None:
+        file_obj = io.BytesIO(st.session_state.uploaded_bytes)
+        df, summary, priorities = load_and_analyse(file_obj)
+    else:
+        df, summary, priorities = load_and_analyse(None)
     st.session_state.load_error = None
 except ValueError as e:
     st.session_state.load_error = str(e)
-    # Fall back to demo data
     df, summary, priorities = load_and_analyse(None)
 except Exception:
     st.session_state.load_error = (
@@ -132,19 +136,19 @@ except Exception:
 # ── CSV template ──────────────────────────────────────────────────────────────
 def get_template_csv() -> bytes:
     template = pd.DataFrame([{
-        "order_id": "SO-2026-001",
+        "order_id":      "SO-2026-001",
         "customer_name": "Example Company Pty Ltd",
-        "order_type": "Sales Order",
-        "status": "Blocked",
-        "priority": "High",
-        "created_date": "2026-04-15",
-        "due_date": "2026-05-20",
-        "assigned_to": "Sarah Chen",
-        "product": "Product Name Here",
-        "value_aud": 45000,
-        "last_updated": "2026-05-28",
-        "delay_reason": "Awaiting customer approval",
-        "notes": "Brief operational note here",
+        "order_type":    "Sales Order",
+        "status":        "Blocked",
+        "priority":      "High",
+        "created_date":  "2026-04-15",
+        "due_date":      "2026-05-20",
+        "assigned_to":   "Sarah Chen",
+        "product":       "Product Name Here",
+        "value_aud":     45000,
+        "last_updated":  "2026-05-28",
+        "delay_reason":  "Awaiting customer approval",
+        "notes":         "Brief operational note here",
     }])
     return template.to_csv(index=False).encode("utf-8")
 
@@ -179,16 +183,16 @@ with st.sidebar:
         )
 
         if uploaded is not None:
-            if uploaded.name != (
-                getattr(st.session_state.uploaded_file, "name", None)
-            ):
-                st.session_state.uploaded_file = uploaded
-                st.session_state.messages = []
-                st.session_state.agent_history = []
-                st.session_state.load_error = None
+            if uploaded.name != st.session_state.uploaded_filename:
+                # Read bytes immediately — UploadedFile goes stale after rerun
+                st.session_state.uploaded_bytes    = uploaded.read()
+                st.session_state.uploaded_filename = uploaded.name
+                st.session_state.messages          = []
+                st.session_state.agent_history     = []
+                st.session_state.load_error        = None
                 st.rerun()
 
-        # Show friendly error if upload failed
+        # Show friendly error or success message
         if st.session_state.load_error:
             st.markdown(
                 f"""
@@ -215,11 +219,12 @@ with st.sidebar:
             )
 
     else:
-        if st.session_state.uploaded_file is not None:
-            st.session_state.uploaded_file = None
-            st.session_state.messages = []
-            st.session_state.agent_history = []
-            st.session_state.load_error = None
+        if st.session_state.uploaded_bytes is not None:
+            st.session_state.uploaded_bytes    = None
+            st.session_state.uploaded_filename = None
+            st.session_state.messages          = []
+            st.session_state.agent_history     = []
+            st.session_state.load_error        = None
             st.rerun()
 
     st.divider()
@@ -241,7 +246,7 @@ with st.sidebar:
 
     st.divider()
 
-    # ── Top priorities — safe access with .get() ──────────────────────────────
+    # ── Top priorities ────────────────────────────────────────────────────────
     st.markdown("#### 🚨 Top Priorities")
     flag_icons = {
         "OVERDUE": "🔴",
@@ -253,11 +258,11 @@ with st.sidebar:
 
     if priorities:
         for order in priorities:
-            icon       = flag_icons.get(order.get("flag", ""), "⚪")
-            order_id   = order.get("order_id", "—")
-            customer   = order.get("customer_name", "Unknown")
-            assignee   = order.get("assigned_to", "Unassigned")
-            days       = order.get("days_until_due", "?")
+            icon     = flag_icons.get(order.get("flag", ""), "⚪")
+            order_id = order.get("order_id", "—")
+            customer = order.get("customer_name", "Unknown")
+            assignee = order.get("assigned_to", "Unassigned")
+            days     = order.get("days_until_due", "?")
             st.markdown(f"{icon} **{order_id}**")
             st.caption(f"{customer}  \n{assignee} · {days} days")
     else:
@@ -306,8 +311,8 @@ with st.sidebar:
 
 # ── Main header ───────────────────────────────────────────────────────────────
 data_label = (
-    f"📁 {st.session_state.uploaded_file.name}"
-    if st.session_state.uploaded_file and not st.session_state.load_error
+    f"📁 {st.session_state.uploaded_filename}"
+    if st.session_state.uploaded_filename and not st.session_state.load_error
     else "🗂️ Demo data"
 )
 
@@ -353,7 +358,6 @@ with tab1:
         df[df["flag"].isin(selected_flags)] if selected_flags else df
     )
 
-    # Only show columns that actually exist
     preferred_cols = [
         "order_id","customer_name","order_type","status",
         "flag","priority","days_until_due","assigned_to",
