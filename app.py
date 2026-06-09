@@ -3,6 +3,7 @@ import pandas as pd
 from src.data_loader import load_orders
 from src.analyzer import analyse_orders
 from src.agent import ask_agent
+from src.emailer import send_alert_email
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -18,7 +19,6 @@ st.markdown("""
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
-
     .project-header {
         padding: 1.5rem 2rem;
         background: linear-gradient(135deg, #1e3a5f 0%, #1d4ed8 100%);
@@ -30,7 +30,6 @@ st.markdown("""
         font-size: 2rem;
         font-weight: 700;
         margin: 0;
-        padding: 0;
     }
     .project-header p {
         color: #bfdbfe;
@@ -76,13 +75,14 @@ st.markdown("""
         background: #3b82f6 !important;
         color: white !important;
     }
-    .error-box {
-        background: #1e1b1b;
-        border-left: 4px solid #ef4444;
-        border-radius: 4px;
-        padding: 1rem 1.25rem;
-        color: #fca5a5;
-        font-size: 0.9rem;
+    .upload-info {
+        background: #1e293b;
+        border: 1px dashed #3b82f6;
+        border-radius: 8px;
+        padding: 0.75rem;
+        font-size: 0.8rem;
+        color: #94a3b8;
+        margin-top: 0.5rem;
     }
     .footer-credit {
         text-align: center;
@@ -95,14 +95,42 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ── Session state defaults ────────────────────────────────────────────────────
+if "uploaded_file" not in st.session_state:
+    st.session_state.uploaded_file = None
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "agent_history" not in st.session_state:
+    st.session_state.agent_history = []
+
 # ── Load and analyse data ─────────────────────────────────────────────────────
-@st.cache_data(ttl=300)
-def get_data():
-    df = load_orders()
+def load_and_analyse(uploaded_file=None):
+    df = load_orders(uploaded_file)
     df, summary, priorities = analyse_orders(df)
     return df, summary, priorities
 
-df, summary, priorities = get_data()
+df, summary, priorities = load_and_analyse(
+    st.session_state.uploaded_file
+)
+
+# ── CSV template for download ─────────────────────────────────────────────────
+def get_template_csv() -> bytes:
+    template = pd.DataFrame([{
+        "order_id": "SO-2026-001",
+        "customer_name": "Example Company Pty Ltd",
+        "order_type": "Sales Order",
+        "status": "Blocked",
+        "priority": "High",
+        "created_date": "2026-04-15",
+        "due_date": "2026-05-20",
+        "assigned_to": "Sarah Chen",
+        "product": "Product Name Here",
+        "value_aud": 45000,
+        "last_updated": "2026-05-28",
+        "delay_reason": "Awaiting customer approval",
+        "notes": "Brief operational note here",
+    }])
+    return template.to_csv(index=False).encode("utf-8")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -110,13 +138,64 @@ with st.sidebar:
     st.caption("Intelligent Order Management System")
     st.divider()
 
+    # ── Data source ───────────────────────────────────────────────────────────
+    st.markdown("#### 📁 Data Source")
+
+    data_source = st.radio(
+        "data source",
+        options=["Use demo data", "Upload your own CSV"],
+        label_visibility="collapsed",
+    )
+
+    if data_source == "Upload your own CSV":
+        st.download_button(
+            label="⬇️ Download CSV template",
+            data=get_template_csv(),
+            file_name="orderiq_template.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+        uploaded = st.file_uploader(
+            "Upload CSV",
+            type=["csv"],
+            label_visibility="collapsed",
+        )
+
+        if uploaded is not None:
+            if uploaded.name != (
+                getattr(st.session_state.uploaded_file, "name", None)
+            ):
+                st.session_state.uploaded_file = uploaded
+                st.session_state.messages = []
+                st.session_state.agent_history = []
+                st.rerun()
+
+        st.markdown(
+            '<div class="upload-info">'
+            "Upload a CSV with your order data.<br>"
+            "Download the template above for the required format."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+    else:
+        if st.session_state.uploaded_file is not None:
+            st.session_state.uploaded_file = None
+            st.session_state.messages = []
+            st.session_state.agent_history = []
+            st.rerun()
+
+    st.divider()
+
+    # ── Summary metrics ───────────────────────────────────────────────────────
     st.markdown("#### Today's Summary")
     st.metric("Total Orders", summary["total_orders"])
 
     c1, c2 = st.columns(2)
-    c1.metric("Overdue", summary["overdue_count"])
-    c2.metric("Blocked", summary["blocked_count"])
-    c1.metric("At Risk", summary["at_risk_count"])
+    c1.metric("Overdue",   summary["overdue_count"])
+    c2.metric("Blocked",   summary["blocked_count"])
+    c1.metric("At Risk",   summary["at_risk_count"])
     c2.metric("Completed", summary["completed_count"])
 
     st.metric(
@@ -125,14 +204,15 @@ with st.sidebar:
     )
 
     st.divider()
-    st.markdown("#### 🚨 Top Priorities")
 
+    # ── Top priorities ────────────────────────────────────────────────────────
+    st.markdown("#### 🚨 Top Priorities")
     flag_icons = {
         "OVERDUE": "🔴",
         "BLOCKED": "🟠",
-        "AT_RISK": "🟡",
-        "STALE":   "🔵",
-        "ON_TRACK":"🟢",
+        "AT_RISK":  "🟡",
+        "STALE":    "🔵",
+        "ON_TRACK": "🟢",
     }
     for order in priorities:
         icon = flag_icons.get(order["flag"], "⚪")
@@ -144,13 +224,38 @@ with st.sidebar:
 
     st.divider()
 
+    # ── Email alert ───────────────────────────────────────────────────────────
+    st.markdown("#### 📧 Email Alert")
+    alert_email = st.text_input(
+        "Recipient email",
+        placeholder="recipient@email.com",
+        label_visibility="collapsed",
+    )
+
+    if st.button("📤 Send Alert Email", use_container_width=True):
+        if not alert_email:
+            st.warning("Please enter a recipient email address.")
+        else:
+            with st.spinner("Sending alert..."):
+                success, message = send_alert_email(
+                    to_email=alert_email,
+                    summary=summary,
+                    priorities=priorities,
+                )
+            if success:
+                st.success(message)
+            else:
+                st.error(message)
+
+    st.divider()
+
     if st.button("🔄 Refresh Data", use_container_width=True):
-        st.cache_data.clear()
         st.rerun()
 
     st.markdown("""
-    <div style='margin-top:2rem; color:#475569; font-size:0.72rem; line-height:1.6'>
-        🧠 <strong>OrderIQ v1.0</strong><br>
+    <div style='margin-top:1rem;color:#475569;font-size:0.72rem;
+                line-height:1.6'>
+        🧠 <strong>OrderIQ v1.1</strong><br>
         Experimental AI Project<br>
         Built by T M Towhidur Rahman Tuhin<br>
         Curtin University · BIS Extension<br>
@@ -158,13 +263,24 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-# ── Header ────────────────────────────────────────────────────────────────────
-st.markdown("""
+# ── Main header ───────────────────────────────────────────────────────────────
+data_label = (
+    "📁 Custom data loaded"
+    if st.session_state.uploaded_file
+    else "🗂️ Demo data"
+)
+
+st.markdown(f"""
 <div class="project-header">
     <h1>🧠 OrderIQ</h1>
-    <p>Intelligent Order Management System — AI-powered sales and service order analysis</p>
+    <p>Intelligent Order Management System
+       — AI-powered sales and service order analysis</p>
     <span class="creator-badge">
-        Experimental Project · T M Towhidur Rahman Tuhin · Curtin University
+        Experimental Project · T M Towhidur Rahman Tuhin
+        · Curtin University
+    </span>
+    <span class="creator-badge" style="margin-left:6px">
+        {data_label}
     </span>
 </div>
 """, unsafe_allow_html=True)
@@ -172,19 +288,23 @@ st.markdown("""
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab1, tab2 = st.tabs(["📋  Orders Dashboard", "🤖  AI Assistant"])
 
-# ── Tab 1: Dashboard ──────────────────────────────────────────────────────────
+# ── Tab 1: Orders Dashboard ───────────────────────────────────────────────────
 with tab1:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Orders", summary["total_orders"])
-    c2.metric("Overdue", summary["overdue_count"])
-    c3.metric("Blocked", summary["blocked_count"])
-    c4.metric("Value at Risk", f"${summary['total_value_at_risk_aud']:,}")
+    c2.metric("Overdue",      summary["overdue_count"])
+    c3.metric("Blocked",      summary["blocked_count"])
+    c4.metric("Value at Risk",
+              f"${summary['total_value_at_risk_aud']:,}")
 
     st.divider()
 
     selected_flags = st.multiselect(
         "Filter by flag",
-        options=["OVERDUE","BLOCKED","AT_RISK","STALE","ON_TRACK","COMPLETED"],
+        options=[
+            "OVERDUE","BLOCKED","AT_RISK",
+            "STALE","ON_TRACK","COMPLETED"
+        ],
         default=["OVERDUE","BLOCKED","AT_RISK"],
     )
 
@@ -192,25 +312,32 @@ with tab1:
         df[df["flag"].isin(selected_flags)] if selected_flags else df
     )
 
-    display_df = filtered_df[[
-        "order_id","customer_name","order_type","status",
-        "flag","priority","days_until_due","assigned_to",
-        "value_aud","delay_reason",
-    ]].copy()
-    display_df.insert(
-        6, "due_date",
-        filtered_df["due_date"].dt.strftime("%Y-%m-%d")
-    )
+    display_cols = [
+        c for c in [
+            "order_id","customer_name","order_type","status",
+            "flag","priority","days_until_due","assigned_to",
+            "value_aud","delay_reason",
+        ] if c in filtered_df.columns
+    ]
+
+    display_df = filtered_df[display_cols].copy()
+    if "due_date" in filtered_df.columns:
+        display_df.insert(
+            6, "due_date",
+            filtered_df["due_date"].dt.strftime("%Y-%m-%d")
+        )
 
     def colour_rows(row):
-        c = {
-            "OVERDUE":   "background-color: #3b0f0f; color: #fca5a5",
-            "BLOCKED":   "background-color: #3b1f0a; color: #fdba74",
-            "AT_RISK":   "background-color: #3b3000; color: #fde68a",
-            "STALE":     "background-color: #0a1f3b; color: #93c5fd",
-            "COMPLETED": "background-color: #0a2e1a; color: #86efac",
+        colours = {
+            "OVERDUE":   "background-color:#3b0f0f;color:#fca5a5",
+            "BLOCKED":   "background-color:#3b1f0a;color:#fdba74",
+            "AT_RISK":   "background-color:#3b3000;color:#fde68a",
+            "STALE":     "background-color:#0a1f3b;color:#93c5fd",
+            "COMPLETED": "background-color:#0a2e1a;color:#86efac",
         }
-        return [c.get(row["flag"], "")] * len(row)
+        if "flag" in row:
+            return [colours.get(row["flag"], "")] * len(row)
+        return [""] * len(row)
 
     st.dataframe(
         display_df.style.apply(colour_rows, axis=1),
@@ -227,20 +354,14 @@ with tab2:
         "The AI understands context and gives business-ready answers."
     )
 
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    if "agent_history" not in st.session_state:
-        st.session_state.agent_history = []
-
-    # Example buttons — shown only on fresh start
     if not st.session_state.messages:
         st.markdown("**Try one of these:**")
         examples = [
             "Which orders need attention today?",
-            "Whats blocking the woodside order?",
-            "Who has most urgnt workload rght now?",
+            "Whats blocking the most urgent order?",
+            "Who has the most urgnt workload rght now?",
             "Sumarise all overdue orders and delay resons",
-            "Which orders are escalted and wat needs to hapn?",
+            "What is the total value at risk and why?",
         ]
         c1, c2 = st.columns(2)
         for i, ex in enumerate(examples):
@@ -250,20 +371,18 @@ with tab2:
                 st.session_state["pending"] = ex
                 st.rerun()
 
-    # Retrieve pending question from example buttons
     pending = st.session_state.get("pending", None)
     if pending:
         del st.session_state["pending"]
 
-    # Display chat history
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # Chat input
-    question = st.chat_input(
-        "Ask about orders, delays, team workload, priorities..."
-    ) or pending
+    question = (
+        st.chat_input("Ask about orders, delays, team workload...")
+        or pending
+    )
 
     if question:
         with st.chat_message("user"):
@@ -277,25 +396,18 @@ with tab2:
                 try:
                     answer, st.session_state.agent_history = ask_agent(
                         question, df, summary,
-                        st.session_state.agent_history
+                        st.session_state.agent_history,
                     )
                     st.markdown(answer)
                     st.session_state.messages.append(
                         {"role": "assistant", "content": answer}
                     )
-                except Exception as e:
-                    error_msg = (
-                        "I wasn't able to process that request right now. "
-                        "This is usually a temporary issue with the AI service. "
-                        "Please try again in a moment, or rephrase your question."
+                except Exception:
+                    err = (
+                        "I wasn't able to process that right now. "
+                        "Please try again or rephrase your question."
                     )
-                    st.markdown(
-                        f'<div class="error-box">⚠️ {error_msg}</div>',
-                        unsafe_allow_html=True,
-                    )
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": f"⚠️ {error_msg}"}
-                    )
+                    st.error(err)
 
     if st.session_state.messages:
         st.divider()
@@ -307,9 +419,9 @@ with tab2:
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="footer-credit">
-    🧠 OrderIQ — Experimental AI Project &nbsp;·&nbsp;
-    Built by <strong>T M Towhidur Rahman Tuhin</strong> &nbsp;·&nbsp;
-    Curtin University, Perth WA &nbsp;·&nbsp;
-    BIS Extension 2025–2026
+    🧠 OrderIQ v1.1 — Experimental AI Project &nbsp;·&nbsp;
+    Built by <strong>T M Towhidur Rahman Tuhin</strong>
+    &nbsp;·&nbsp; Curtin University, Perth WA
+    &nbsp;·&nbsp; BIS Extension 2025–2026
 </div>
 """, unsafe_allow_html=True)
