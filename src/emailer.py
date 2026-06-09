@@ -5,6 +5,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _get_secret(key: str) -> str | None:
+    """Return secret from Streamlit Cloud secrets, falling back to os.environ."""
+    try:
+        import streamlit as st
+        return st.secrets[key]
+    except Exception:
+        return os.getenv(key)
+
+
 def build_email_html(summary: dict, priorities: list) -> str:
     """Build a professional HTML email with order alert details."""
 
@@ -159,7 +168,7 @@ def send_alert_email(
         (success: bool, message: str)
     """
 
-    api_key = os.getenv("RESEND_API_KEY")
+    api_key = _get_secret("RESEND_API_KEY")
 
     if not api_key:
         return False, (

@@ -6,6 +6,15 @@ from dotenv import load_dotenv
 # Load API key from .env file (for local development)
 load_dotenv()
 
+
+def _get_secret(key: str) -> str | None:
+    """Return secret from Streamlit Cloud secrets, falling back to os.environ."""
+    try:
+        import streamlit as st
+        return st.secrets[key]
+    except Exception:
+        return os.getenv(key)
+
 # The AI's personality and instructions
 SYSTEM_PROMPT = """You are an intelligent order management assistant
 for an industrial company. You help the operations team manage open
@@ -62,7 +71,7 @@ Type      : {row['order_type']}
 Status    : {row['status']}
 Flag      : {row['flag']}
 Priority  : {row['priority']}
-Due       : {row['due_date'].strftime('%Y-%m-%d')} ({row['days_until_due']} days)
+Due       : {row['due_date'].strftime('%Y-%m-%d') if pd.notna(row.get('due_date')) else 'N/A'} ({row['days_until_due']} days)
 Owner     : {row['assigned_to']}
 Product   : {row['product']}
 Value     : ${row['value_aud']:,} AUD
@@ -94,8 +103,8 @@ def ask_agent(
         history  : Updated conversation history
     """
 
-    # Get the API key from environment
-    api_key = os.getenv("GROQ_API_KEY")
+    # Get the API key — tries Streamlit Cloud secrets first, then os.environ
+    api_key = _get_secret("GROQ_API_KEY")
 
     # Check the API key exists before doing anything
     if not api_key:
