@@ -47,8 +47,8 @@ def analyse_orders(df: pd.DataFrame) -> tuple[pd.DataFrame, dict, list]:
     Run automated analysis on the orders DataFrame.
 
     Returns:
-        df       : original DataFrame with a new 'flag' column added
-        summary  : dict with order counts and total value at risk
+        df        : original DataFrame with a new 'flag' column added
+        summary   : dict with order counts and total value at risk
         priorities: list of top 5 most urgent orders as dicts
     """
 
@@ -58,38 +58,48 @@ def analyse_orders(df: pd.DataFrame) -> tuple[pd.DataFrame, dict, list]:
     # Apply the flag function to every row
     df["flag"] = df.apply(assign_flag, axis=1)
 
+    # Calculate value at risk — safely handle missing value_aud column
+    at_risk_df = df[df["flag"].isin(["OVERDUE", "BLOCKED", "AT_RISK"])]
+    total_value_at_risk = (
+        int(at_risk_df["value_aud"].sum())
+        if "value_aud" in df.columns
+        else 0
+    )
+
     # Build the summary statistics
     summary = {
-        "total_orders": len(df),
-        "overdue_count": int(len(df[df["flag"] == "OVERDUE"])),
-        "blocked_count": int(len(df[df["flag"] == "BLOCKED"])),
-        "at_risk_count": int(len(df[df["flag"] == "AT_RISK"])),
-        "stale_count": int(len(df[df["flag"] == "STALE"])),
-        "on_track_count": int(len(df[df["flag"] == "ON_TRACK"])),
-        "completed_count": int(len(df[df["flag"] == "COMPLETED"])),
-        "total_value_at_risk_aud": int(
-            df[df["flag"].isin(["OVERDUE", "BLOCKED", "AT_RISK"])]["value_aud"].sum()
-        ),
+        "total_orders":           len(df),
+        "overdue_count":          int(len(df[df["flag"] == "OVERDUE"])),
+        "blocked_count":          int(len(df[df["flag"] == "BLOCKED"])),
+        "at_risk_count":          int(len(df[df["flag"] == "AT_RISK"])),
+        "stale_count":            int(len(df[df["flag"] == "STALE"])),
+        "on_track_count":         int(len(df[df["flag"] == "ON_TRACK"])),
+        "completed_count":        int(len(df[df["flag"] == "COMPLETED"])),
+        "total_value_at_risk_aud": total_value_at_risk,
     }
 
     # Build the top 5 priorities list
     # Sort by flag urgency first, then by most overdue first
     df["flag_rank"] = df["flag"].map(FLAG_PRIORITY)
 
+    # Only include columns that actually exist in the DataFrame
+    priority_cols = [
+        col for col in [
+            "order_id",
+            "customer_name",
+            "status",
+            "flag",
+            "days_until_due",
+            "assigned_to",
+            "delay_reason",
+        ]
+        if col in df.columns
+    ]
+
     priorities = (
         df[df["flag"] != "COMPLETED"]
         .sort_values(["flag_rank", "days_until_due"])
-        .head(5)[
-            [
-                "order_id",
-                "customer_name",
-                "status",
-                "flag",
-                "days_until_due",
-                "assigned_to",
-                "delay_reason",
-            ]
-        ]
+        .head(5)[priority_cols]
         .to_dict("records")
     )
 
