@@ -1,11 +1,8 @@
 name: OrderIQ Daily Alert
 
 on:
-  # Runs at 11:00 PM UTC = 7:00 AM AWST (Perth time)
   schedule:
     - cron: '0 23 * * 1-5'
-
-  # Also allows manual trigger from GitHub Actions tab
   workflow_dispatch:
 
 jobs:
@@ -22,10 +19,13 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install pandas resend python-dotenv
+        run: |
+          pip install pandas resend python-dotenv
 
       - name: Run daily alert script
         env:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
-        run: python scripts/send_daily_alert.py
+        run: |
+          cd $GITHUB_WORKSPACE
+          python scripts/send_daily_alert.py
