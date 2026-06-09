@@ -83,6 +83,7 @@ st.markdown("""
         font-size: 0.8rem;
         color: #94a3b8;
         margin-top: 0.5rem;
+        line-height: 1.6;
     }
     .footer-credit {
         text-align: center;
@@ -102,6 +103,8 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "agent_history" not in st.session_state:
     st.session_state.agent_history = []
+if "load_error" not in st.session_state:
+    st.session_state.load_error = None
 
 # ── Load and analyse data ─────────────────────────────────────────────────────
 def load_and_analyse(uploaded_file=None):
@@ -109,11 +112,24 @@ def load_and_analyse(uploaded_file=None):
     df, summary, priorities = analyse_orders(df)
     return df, summary, priorities
 
-df, summary, priorities = load_and_analyse(
-    st.session_state.uploaded_file
-)
+# Safe load with friendly error handling
+try:
+    df, summary, priorities = load_and_analyse(
+        st.session_state.uploaded_file
+    )
+    st.session_state.load_error = None
+except ValueError as e:
+    st.session_state.load_error = str(e)
+    # Fall back to demo data
+    df, summary, priorities = load_and_analyse(None)
+except Exception:
+    st.session_state.load_error = (
+        "Something went wrong reading your file. "
+        "Please make sure it is a valid CSV and try again."
+    )
+    df, summary, priorities = load_and_analyse(None)
 
-# ── CSV template for download ─────────────────────────────────────────────────
+# ── CSV template ──────────────────────────────────────────────────────────────
 def get_template_csv() -> bytes:
     template = pd.DataFrame([{
         "order_id": "SO-2026-001",
@@ -169,21 +185,41 @@ with st.sidebar:
                 st.session_state.uploaded_file = uploaded
                 st.session_state.messages = []
                 st.session_state.agent_history = []
+                st.session_state.load_error = None
                 st.rerun()
 
-        st.markdown(
-            '<div class="upload-info">'
-            "Upload a CSV with your order data.<br>"
-            "Download the template above for the required format."
-            "</div>",
-            unsafe_allow_html=True,
-        )
+        # Show friendly error if upload failed
+        if st.session_state.load_error:
+            st.markdown(
+                f"""
+                <div style='background:#2d1515;border:1px solid #ef4444;
+                            border-radius:8px;padding:10px 12px;
+                            font-size:0.8rem;color:#fca5a5;
+                            line-height:1.6;margin-top:8px'>
+                    ⚠️ <strong>Upload issue</strong><br>
+                    {st.session_state.load_error}<br><br>
+                    👉 Download the template above to see the
+                    correct format. Showing demo data for now.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                '<div class="upload-info">'
+                "✅ Upload a CSV with your order data.<br>"
+                "Download the template for the correct format.<br>"
+                "The app works with any number of rows."
+                "</div>",
+                unsafe_allow_html=True,
+            )
 
     else:
         if st.session_state.uploaded_file is not None:
             st.session_state.uploaded_file = None
             st.session_state.messages = []
             st.session_state.agent_history = []
+            st.session_state.load_error = None
             st.rerun()
 
     st.divider()
@@ -205,7 +241,7 @@ with st.sidebar:
 
     st.divider()
 
-    # ── Top priorities ────────────────────────────────────────────────────────
+    # ── Top priorities — safe access with .get() ──────────────────────────────
     st.markdown("#### 🚨 Top Priorities")
     flag_icons = {
         "OVERDUE": "🔴",
@@ -214,13 +250,18 @@ with st.sidebar:
         "STALE":    "🔵",
         "ON_TRACK": "🟢",
     }
-    for order in priorities:
-        icon = flag_icons.get(order["flag"], "⚪")
-        st.markdown(f"{icon} **{order['order_id']}**")
-        st.caption(
-            f"{order['customer_name']}  \n"
-            f"{order['assigned_to']} · {order['days_until_due']} days"
-        )
+
+    if priorities:
+        for order in priorities:
+            icon       = flag_icons.get(order.get("flag", ""), "⚪")
+            order_id   = order.get("order_id", "—")
+            customer   = order.get("customer_name", "Unknown")
+            assignee   = order.get("assigned_to", "Unassigned")
+            days       = order.get("days_until_due", "?")
+            st.markdown(f"{icon} **{order_id}**")
+            st.caption(f"{customer}  \n{assignee} · {days} days")
+    else:
+        st.caption("No urgent orders found.")
 
     st.divider()
 
@@ -255,7 +296,7 @@ with st.sidebar:
     st.markdown("""
     <div style='margin-top:1rem;color:#475569;font-size:0.72rem;
                 line-height:1.6'>
-        🧠 <strong>OrderIQ v1.1</strong><br>
+        🧠 <strong>OrderIQ v1.2</strong><br>
         Experimental AI Project<br>
         Built by T M Towhidur Rahman Tuhin<br>
         Curtin University · BIS Extension<br>
@@ -265,8 +306,8 @@ with st.sidebar:
 
 # ── Main header ───────────────────────────────────────────────────────────────
 data_label = (
-    "📁 Custom data loaded"
-    if st.session_state.uploaded_file
+    f"📁 {st.session_state.uploaded_file.name}"
+    if st.session_state.uploaded_file and not st.session_state.load_error
     else "🗂️ Demo data"
 )
 
@@ -288,7 +329,7 @@ st.markdown(f"""
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab1, tab2 = st.tabs(["📋  Orders Dashboard", "🤖  AI Assistant"])
 
-# ── Tab 1: Orders Dashboard ───────────────────────────────────────────────────
+# ── Tab 1: Dashboard ──────────────────────────────────────────────────────────
 with tab1:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Orders", summary["total_orders"])
@@ -303,7 +344,7 @@ with tab1:
         "Filter by flag",
         options=[
             "OVERDUE","BLOCKED","AT_RISK",
-            "STALE","ON_TRACK","COMPLETED"
+            "STALE","ON_TRACK","COMPLETED",
         ],
         default=["OVERDUE","BLOCKED","AT_RISK"],
     )
@@ -312,19 +353,20 @@ with tab1:
         df[df["flag"].isin(selected_flags)] if selected_flags else df
     )
 
-    display_cols = [
-        c for c in [
-            "order_id","customer_name","order_type","status",
-            "flag","priority","days_until_due","assigned_to",
-            "value_aud","delay_reason",
-        ] if c in filtered_df.columns
+    # Only show columns that actually exist
+    preferred_cols = [
+        "order_id","customer_name","order_type","status",
+        "flag","priority","days_until_due","assigned_to",
+        "value_aud","delay_reason",
     ]
+    display_cols = [c for c in preferred_cols if c in filtered_df.columns]
+    display_df   = filtered_df[display_cols].copy()
 
-    display_df = filtered_df[display_cols].copy()
     if "due_date" in filtered_df.columns:
         display_df.insert(
-            6, "due_date",
-            filtered_df["due_date"].dt.strftime("%Y-%m-%d")
+            min(6, len(display_df.columns)),
+            "due_date",
+            filtered_df["due_date"].dt.strftime("%Y-%m-%d"),
         )
 
     def colour_rows(row):
@@ -359,8 +401,8 @@ with tab2:
         examples = [
             "Which orders need attention today?",
             "Whats blocking the most urgent order?",
-            "Who has the most urgnt workload rght now?",
-            "Sumarise all overdue orders and delay resons",
+            "Who has the most urgent workload right now?",
+            "Summarise all overdue orders and delay reasons",
             "What is the total value at risk and why?",
         ]
         c1, c2 = st.columns(2)
@@ -380,7 +422,7 @@ with tab2:
             st.markdown(msg["content"])
 
     question = (
-        st.chat_input("Ask about orders, delays, team workload...")
+        st.chat_input("Ask about orders, delays, workload, priorities...")
         or pending
     )
 
@@ -407,7 +449,7 @@ with tab2:
                         "I wasn't able to process that right now. "
                         "Please try again or rephrase your question."
                     )
-                    st.error(err)
+                    st.warning(err)
 
     if st.session_state.messages:
         st.divider()
@@ -419,7 +461,7 @@ with tab2:
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="footer-credit">
-    🧠 OrderIQ v1.1 — Experimental AI Project &nbsp;·&nbsp;
+    🧠 OrderIQ v1.2 — Experimental AI Project &nbsp;·&nbsp;
     Built by <strong>T M Towhidur Rahman Tuhin</strong>
     &nbsp;·&nbsp; Curtin University, Perth WA
     &nbsp;·&nbsp; BIS Extension 2025–2026
